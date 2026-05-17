@@ -1,7 +1,14 @@
+"""Extract NYC 311 service request data from the Socrata API.
+
+This script identifies the ten most common 2024 complaint types and downloads
+matching service request records in paginated API calls.
+"""
+
 import os
 import time
-import requests
+
 import pandas as pd
+import requests
 from dotenv import load_dotenv
 
 from config import (
@@ -19,6 +26,7 @@ load_dotenv()
 
 
 def get_headers():
+    """Return API headers with the Socrata app token when one is available."""
     app_token = os.getenv("SOCRATA_APP_TOKEN")
 
     if app_token:
@@ -28,6 +36,7 @@ def get_headers():
 
 
 def run_api_query(params):
+    """Submit one API request and return the JSON response."""
     response = requests.get(
         API_URL,
         params=params,
@@ -35,11 +44,14 @@ def run_api_query(params):
         timeout=60,
     )
 
+    # Fail immediately if the API returns an error so bad data is not saved.
     response.raise_for_status()
+
     return response.json()
 
 
 def get_top_complaint_types():
+    """Find the highest-volume complaint types in the selected date range."""
     params = {
         "$select": "complaint_type, count(*) as request_count",
         "$where": (
@@ -63,10 +75,12 @@ def get_top_complaint_types():
 
 
 def escape_soql_string(value):
+    """Escape apostrophes so complaint names can be safely used in SoQL."""
     return value.replace("'", "''")
 
 
 def fetch_complaint_type(complaint_type):
+    """Download all records for one complaint type using limit/offset paging."""
     all_rows = []
     offset = 0
 
@@ -88,6 +102,7 @@ def fetch_complaint_type(complaint_type):
 
         rows = run_api_query(params)
 
+        # An empty page means there are no more records to retrieve.
         if not rows:
             break
 
@@ -98,16 +113,20 @@ def fetch_complaint_type(complaint_type):
             f"at offset {offset:,}"
         )
 
+        # A short final page means the query has reached the end of the result set.
         if len(rows) < PAGE_LIMIT:
             break
 
         offset += PAGE_LIMIT
+
+        # Pause briefly to avoid hammering the public API during pagination.
         time.sleep(0.2)
 
     return all_rows
 
 
 def main():
+    """Run extraction and save the raw API data as a CSV file."""
     top_types = get_top_complaint_types()
 
     all_rows = []
